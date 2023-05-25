@@ -1,6 +1,6 @@
 from fastapi import APIRouter
-from app.routers.endpoints.external_mock import router as mock_router
+from app.routers.endpoints.groups import router as group_router
 
 router = APIRouter()
 
-router.include_router(mock_router, tags=["mock"])
+router.include_router(group_router, tags=["groups"])
