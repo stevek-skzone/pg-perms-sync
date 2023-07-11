@@ -1,0 +1,26 @@
+
+version: '3.9'
+services:
+  redis:
+    network_mode: host
+    image: redis
+
+  db:
+    image: postgres
+    network_mode: host
+    environment:
+      POSTGRES_PASSWORD: example
+      POSTGRES_PORT: 5432
+
+  db2:
+    image: postgres
+    network_mode: host
+    environment:
+      POSTGRES_PASSWORD: example
+      POSTGRES_PORT: 5433
+
+  adminer:
+    image: adminer
+    network_mode: host
+    # ports:
+    #   - 8080:8080
