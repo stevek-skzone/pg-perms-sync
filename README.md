@@ -16,3 +16,8 @@ pip install -i https://test.pypi.org/simple/ pg-mgt-utils
   * PostgreSQL Instance with PostgRest API
   * Hashicorp Vault for secret management
 
+job table contains all server/databases and job_types.
+Process gets an item not processed in 15 minutes and not being processed.
+Marks it as being processed - job_status = 1
+perform actions - writing updates to job_history table
+mark as not being processed - job_status = 0
