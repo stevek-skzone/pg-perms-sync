@@ -1,6 +1,7 @@
 from fastapi import APIRouter
-from app.routers.endpoints.groups import router as group_router
+
+from app.routers.endpoints.jobs import router as job_router
 
 router = APIRouter()
 
-router.include_router(group_router, tags=["groups"])
+router.include_router(job_router, tags=["jobs"])
