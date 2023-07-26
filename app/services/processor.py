@@ -4,9 +4,14 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 
-import psycopg
+# import psycopg
 import requests
-from psycopg import sql
+
+# from psycopg import sql
+from pg_mgt_utils.pg_client import PgClient
+from pg_mgt_utils.pg_common import pg_scram_sha256
+
+from app.config import config
 
 
 async def add_user_to_server(
@@ -33,54 +38,12 @@ async def add_user_to_server(
     Returns:
         None
     """
-    conn = psycopg.connect(
-        host=server, dbname=database, user=user, password=password, autocommit=True
-    )
+    pg_client = PgClient(server, user, password, database)
 
-    cur = conn.cursor()
-
-    # Check if group exists
-    cur.execute("SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = %s", (group,))
-    group_exists = cur.fetchone() is not None
-
-    if not group_exists:
-        # Create group
-        cur.execute(sql.SQL("CREATE ROLE {group}").format(group=sql.Identifier(group)))
-
-    # Check if user exists
-    cur.execute("SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = %s", (username,))
-    user_exists = cur.fetchone() is not None
-
-    if not user_exists:
-        # Create user with hashed password
-        hashed_password = hashlib.sha256(hashed_password.encode()).hexdigest()
-        cur.execute(
-            sql.SQL("CREATE ROLE {username} WITH ENCRYPTED PASSWORD %s").format(
-                username=sql.Identifier(username)
-            ),
-            (sql.Literal(hashed_password),),
-        )
-
-    else:
-        # Update password with hashed password
-        hashed_password = hashlib.sha256(hashed_password.encode()).hexdigest()
-        cur.execute(
-            sql.SQL("ALTER ROLE {username} WITH ENCRYPTED PASSWORD %s").format(
-                username=sql.Identifier(username)
-            ),
-            (hashed_password,),
-        )
-
-    # Add user to group
-    cur.execute(
-        sql.SQL("GRANT {group} TO {username}").format(
-            group=sql.Identifier(group), username=sql.Identifier(username)
-        )
-    )
-
-    conn.commit()
-    cur.close()
-    conn.close()
+    result = pg_client.check_user_exists(username)
+    if not result:
+        hashed_password = pg_scram_sha256()
+        pg_client.create_user(username, hashed_password)
 
 
 async def remove_user_from_server(
