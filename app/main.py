@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 
-from app.routers.v1 import router as v1_router
+from app.routers.router import router as v1_router
 from app.services.processor import sync_roles
 from app.services.scheduler import scheduler
 

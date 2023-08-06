@@ -13,6 +13,88 @@ from pg_mgt_utils.pg_common import pg_scram_sha256
 
 from app.config import config
 
+# Get jobs from postgrest
+# Get all groups for a server
+# Get records from ldap
+# Compare records
+#  - if ldap record not in postgrest, add it
+#  - if postgrest record not in ldap, remove it
+
+
+async def get_jobs() -> Optional[List[dict]]:
+    """
+    Gets a list of jobs from a PostgRest API.
+
+    Returns:
+        List[dict]: A list of jobs.
+    """
+    response = requests.get(f"{config.POSTGREST_URL}/job", timeout=5)
+    if response.status_code == 200:
+        jobs = response.json()
+        return jobs
+
+    return None
+
+
+async def get_groups(server_name: str) -> Optional[List[str]]:
+    """
+    Gets a list of groups from a PostgRest API for a server.
+
+    Args:
+        server_name (str): The name of the server.
+
+    Returns:
+        List[str]: A list of group names.
+    """
+    # use api to get groups
+    response = requests.get(
+        f"{config.POSTGREST_URL}/group?server_name=eq.{server_name}", timeout=5
+    )
+    if response.status_code == 200:
+        groups = response.json()
+        return groups  # list of dicts with group_name and server_name
+
+    return None
+
+
+async def get_group_from_ldap(group_name: str) -> Optional[List[str]]:
+    """
+    Gets a list of members for an external group from an API.
+
+    Args:
+        group (str): The name of the group.
+
+    Returns:
+        List[str]: A list of member names.
+    """
+    response = requests.get(
+        f"{config.ENTITLEMENT_CACHE_SERVER}/ldap_group/{group_name}", timeout=5
+    )
+    if response.status_code == 200:
+        members = response.json()["members"]
+        return members
+
+    print(f"Error getting external group members for group {group_name}")
+    return []
+
+
+# function that compares a source and target list and returns a list of items to add and a list of items to remove
+def compare_lists(source: List[str], target: List[str]) -> tuple:
+    """
+    Compares two lists and returns a tuple of lists of items to add and items to remove.
+
+    Args:
+        source (List[str]): The source list.
+        target (List[str]): The target list.
+
+    Returns:
+        tuple: A tuple of lists of items to add and items to remove.
+    """
+    items_to_add = set(source) - set(target)
+    items_to_remove = set(target) - set(source)
+
+    return items_to_add, items_to_remove
+
 
 async def add_user_to_server(
     username: str,
@@ -47,7 +129,7 @@ async def add_user_to_server(
 
 
 async def remove_user_from_server(
-    username: str, group: str, host: str, database: str, user: str, password: str
+    username: str, group: str, server: str, database: str, user: str, password: str
 ) -> None:
     """
     Removes a user from a group on a PostgreSQL server.
@@ -63,178 +145,32 @@ async def remove_user_from_server(
     Returns:
         None
     """
-    conn = psycopg.connect(
-        host=host, dbname=database, user=user, password=password, autocommit=True
-    )
+    pg_client = PgClient(server, user, password, database)
 
-    cur = conn.cursor()
-
-    # Remove user from group
-    cur.execute(
-        sql.SQL("REVOKE {group} FROM {username}").format(
-            group=sql.Identifier(group), username=sql.Identifier(username)
-        )
-    )
-
-    # Check if user is a member of any other groups
-    cur.execute(
-        """SELECT oid FROM pg_roles WHERE oid IN (
-                            SELECT roleid FROM pg_auth_members 
-                            WHERE member=(SELECT oid FROM pg_roles WHERE rolname=%s)
-                        )""",
-        (username,),
-    )
-
-    result = cur.fetchone()
-    is_member_of_other_groups = result[0] > 0 if result is not None else False
-
-    if not is_member_of_other_groups:
-        # Check if user owns any objects
-        cur.execute(
-            """SELECT relname, relkind FROM pg_catalog.pg_class WHERE relowner = (
-                                SELECT oid FROM pg_roles WHERE rolname=%s
-                            )""",
-            (username,),
-        )
-        objects_owned = cur.fetchall()
-
-        for obj in objects_owned:
-            # Reassign ownership to database owner
-            cur.execute(
-                "SELECT datdba FROM pg_catalog.pg_database WHERE datname = %s",
-                (database,),
-            )
-            result = cur.fetchone()
-            database_owner = result[0] if result is not None else "postgres"
-            cur.execute(
-                sql.SQL("ALTER {obj_type} {obj_name} OWNER TO {database_owner}").format(
-                    obj_type=sql.Identifier(obj[1]),
-                    obj_name=sql.Identifier(obj[0]),
-                    database_owner=sql.Identifier(database_owner),
-                )
-            )
-
-        # Drop user
-        cur.execute(
-            sql.SQL("DROP ROLE {username}").format(username=sql.Identifier(username))
-        )
-
-    conn.commit()
-    cur.close()
-    conn.close()
-
-
-async def sync_roles() -> None:
-    """
-    Synchronizes roles between external and local groups.
-
-    Returns:
-        None
-    """
-    print("Syncing roles")
-    time.sleep(5)
-    print("Roles synced")
-
-
-async def get_servers() -> Optional[List[str]]:
-    """
-    Gets a list of servers from an external API.
-
-    Returns:
-        List[str]: A list of server names.
-    """
-    response = requests.get("http://localhost:8000/api/v1/servers", timeout=5)
-    if response.status_code == 200:
-        servers = response.json()
-        return servers
-
-    print("Error getting servers")
-
-
-async def get_local_groups(server_name: str) -> Optional[List[str]]:
-    """
-    Gets a list of local groups from a PostgreSQL server.
-
-    Args:
-        server (str): The hostname or IP address of the PostgreSQL server.
-
-    Returns:
-        List[str]: A list of group names.
-    """
-    response = requests.get(
-        f"http://localhost:8000/api/v1/server/{server_name}", timeout=5
-    )
-    if response.status_code == 200:
-        groups = response.json()["groups"]
-        return groups
-
-    print("Error getting groups")
-
-
-async def get_local_group_members(server_name: str, group: str) -> List[str]:
-    """
-    Gets a list of members for a local group from a PostgreSQL server.
-
-    Args:
-        server_name (str): The hostname or IP address of the PostgreSQL server.
-        group (str): The name of the group.
-
-    Returns:
-        List[str]: A list of member names.
-    """
-    response = requests.get(
-        f"http://localhost:8000/api/v1/group/{server_name}/{group}", timeout=5
-    )
-    if response.status_code == 200:
-        members = response.json()["members"]
-        return members
-
-    print(
-        f"Error getting local group members for group {group} on server {server_name}"
-    )
-    return []
-
-
-async def get_external_group_members(group: str) -> List[str]:
-    """
-    Gets a list of members for an external group from an API.
-
-    Args:
-        group (str): The name of the group.
-
-    Returns:
-        List[str]: A list of member names.
-    """
-    response = requests.get(
-        f"http://localhost:8001/ldap_group/{group}?refresh=true", timeout=5
-    )
-    if response.status_code == 200:
-        members = response.json()["members"]
-        return members
-
-    print(f"Error getting external group members for group {group}")
-    return []
+    result = pg_client.check_user_exists(username)
+    if result:
+        pg_client.drop_user(username)
 
 
 async def process_servers(batch_size: int = 10) -> None:
     """
-    Processes a batch of servers.
+    Processes a batch of jobs.
 
     Args:
-        batch_size (int): The number of servers to process in a batch.
+        batch_size (int): The number of jobs to process in a batch.
 
     Returns:
         None
     """
-    servers = await get_servers()
-    if servers is None:
-        print("No servers found")
+    jobs = await get_jobs()
+    if jobs is None:
+        print("No jobs found")
         return
 
     with ThreadPoolExecutor() as executor:
         futures = []
-        for server in servers:
-            future = executor.submit(process_server, server)
+        for job in jobs:
+            future = executor.submit(process_server, job)
             futures.append(future)
 
             if len(futures) >= batch_size:
@@ -255,20 +191,19 @@ async def process_server(server: str) -> None:
     Returns:
         None
     """
-    local_groups = await get_local_groups(server)
-    if local_groups is None:
-        print(f"No local groups found for server {server}")
+    server_groups = await get_groups(server)
+    if server_groups is None:
+        print(f"No groups found for server {server}")
         return
 
-    for group in local_groups:
-        external_members = await get_external_group_members(group)
-        local_members = await get_local_group_members(server, group)
+    for group in server_groups:
+        ldap_members = await get_group_from_ldap(group["group_name"])
+        server_members = group["members"]
 
-        members_to_add = set(external_members) - set(local_members)
-        members_to_remove = set(local_members) - set(external_members)
+        members_to_add, members_to_remove = compare_lists(ldap_members, server_members)
 
         # Your code to add or remove members goes here
         print(
-            f"""Group {group}: {len(members_to_add)} members to add, 
+            f"""Group {group}: {len(members_to_add)} members to add,
             {len(members_to_remove)} members to remove"""
         )
