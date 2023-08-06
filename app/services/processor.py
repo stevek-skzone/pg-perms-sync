@@ -126,6 +126,9 @@ async def add_user_to_server(
     if not result:
         hashed_password = pg_scram_sha256()
         pg_client.create_user(username, hashed_password)
+        result = pg_client.check_user_exists(username)
+
+    pg_client.add_users_to_role([username], group)
 
 
 async def remove_user_from_server(
@@ -149,6 +152,10 @@ async def remove_user_from_server(
 
     result = pg_client.check_user_exists(username)
     if result:
+        pg_client.remove_users_from_role([username], group)
+
+    result = pg_client.return_user_info(username)
+    if result["groups"] == []:
         pg_client.drop_user(username)
 
 
